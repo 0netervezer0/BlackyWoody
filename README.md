@@ -1,2 +1,9 @@
 # BlackyWoody
+
+<div style="text-align: center;">
+  <img alt="BlackyWoody logo" src=".github/sources/logo.svg" width="100%" height="200px">
+</div>
+
+---
+
 Simple P2P terminal messenger with text formatting
