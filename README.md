@@ -1,7 +1,7 @@
 # BlackyWoody
 
 <div style="text-align: center;">
-  <img alt="BlackyWoody logo" src="/sources/logo.svg" width="100%" height="200px">
+  <img alt="BlackyWoody logo" src="/sources/logo.svg" width="10%" height="200px">
 </div>
 
 ---
