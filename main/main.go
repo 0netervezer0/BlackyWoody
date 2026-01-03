@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -245,7 +246,7 @@ func handleConn(ctx context.Context, conn net.Conn, myName string, isServer bool
 				msg, err := secure.ReadMessage()
 				if err != nil {
 					fmt.Printf(
-						"\n[%s%s%s] Encrypted channel closed\n",
+						"\n[%s%s%s] Сhannel closed\n",
 						colorRed, tag, colorReset,
 					)
 					fmt.Printf(
@@ -255,10 +256,12 @@ func handleConn(ctx context.Context, conn net.Conn, myName string, isServer bool
 					os.Exit(0)
 				}
 
+				// Render formatting markup to ANSI for display
+				formatted := formatMessage(msg)
 				fmt.Printf(
 					"\r[%s%s%s] [%s]: %s\n> ",
 					colorPeer, peerName, colorReset,
-					timeNow(), msg,
+					timeNow(), formatted,
 				)
 			}
 		}
@@ -314,6 +317,56 @@ func handleConn(ctx context.Context, conn net.Conn, myName string, isServer bool
 
 func timeNow() string {
 	return time.Now().Format("15:04:05")
+}
+
+// formatMessage converts simple markdown-like markup into ANSI sequences:
+// - ***bold italic***, **bold**, *italic*
+// - $<color>$...$reset$ (named color from the map; case-insensitive)
+func formatMessage(s string) string {
+	if s == "" {
+		return s
+	}
+
+	// triple stars -> bold + italic (use specific off-codes so color isn't reset)
+	// bold on: 1, off: 22; italic on: 3, off: 23
+	reTriple := regexp.MustCompile(`\*\*\*(.+?)\*\*\*`)
+	s = reTriple.ReplaceAllString(s, "\u001b[1m\u001b[3m$1\u001b[23m\u001b[22m")
+
+	// bold (off: 22)
+	reBold := regexp.MustCompile(`\*\*(.+?)\*\*`)
+	s = reBold.ReplaceAllString(s, "\u001b[1m$1\u001b[22m")
+
+	// italic (off: 23)
+	reItalic := regexp.MustCompile(`\*(.+?)\*`)
+	s = reItalic.ReplaceAllString(s, "\u001b[3m$1\u001b[23m")
+
+	colorMap := map[string]string{
+		"red":    "\u001b[31m",
+		"orange": "\u001b[38;5;208m",
+		"yellow": "\u001b[33m",
+		"green":  "\u001b[32m",
+		"blue":   "\u001b[34m",
+		"indigo": "\u001b[38;5;54m",
+		"violet": "\u001b[35m",
+		"magenta":"\u001b[35m",
+	}
+
+	reColor := regexp.MustCompile(`\$([a-zA-Z]+)\$(.+?)\$reset\$`)
+	s = reColor.ReplaceAllStringFunc(s, func(m string) string {
+		sub := reColor.FindStringSubmatch(m)
+		if len(sub) < 3 {
+			return m
+		}
+		name := strings.ToLower(sub[1])
+		text := sub[2]
+		if code, ok := colorMap[name]; ok {
+			return code + text + colorReset
+		}
+		// unknown color: strip markers and return inner text
+		return text
+	})
+
+	return s
 }
 
 func showLocalIPs() {
