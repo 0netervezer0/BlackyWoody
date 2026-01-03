@@ -4,30 +4,26 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
-func main() {
-	ClearTerminal()
-	fmt.Print(
-		"\u001b[31m                                     _\n",
-		"_-_ _,,   ,,            ,,          - - /, /,              |\\\n",
-		"   -/  )  ||   _        ||            )/ )/ )               \\\\\n",
-		"  ~||_<   ||  < \\,  _-_ ||/\\ '\\\\/\\\\   )__)__)  /'\\\\  /'\\\\  / \\\\ '\\\\/\\\\\n",
-		"   || \\\\  ||  /-|| ||   ||_<  || ;'  ~)__)__) || || || || || ||  || ;'\n",
-		"   ,/--|| || (( || ||   || |  ||/     )  )  ) || || || || || ||  ||/\n",
-		"  _--_-'  \\\\  \\/\\\\ \\\\,/ \\\\,\\  |/     /-_/-_/  \\\\,/  \\\\,/   \\\\/   |/\n",
-		" (                           (                                  (\n",
-		"                              -_-                                -_-\u001b[0m\n")
+const (
+	colorRed   = "\u001b[31m"
+	colorPeer  = "\u001b[38;5;88m"
+	colorReset = "\u001b[0m"
+
+	tag = "BlackyWoody"
+)
+
+func main() { 
+	clearTerminal()
+	printBanner()
 
 	if len(os.Args) < 2 {
 		usage()
@@ -52,39 +48,40 @@ func main() {
 			fmt.Println("Usage: woody listen <port>")
 			return
 		}
-		port := os.Args[2]
-		if err := listenMode(ctx, port, name); err != nil {
+		if err := listenMode(ctx, os.Args[2], name); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
+
 	case "connect":
 		if len(os.Args) != 3 {
 			fmt.Println("Usage: woody connect <ip:port>")
 			return
 		}
-		addr := os.Args[2]
-		if err := connectMode(ctx, addr, name); err != nil {
+		if err := connectMode(ctx, os.Args[2], name); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
+
 	default:
 		usage()
 	}
 }
 
-func ClearTerminal() {
-	var cmd *exec.Cmd
+func clearTerminal() {
+	fmt.Print("\033[2J\033[H")
+}
 
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", "cls")
-	} else if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		cmd = exec.Command("clear")
-	} else {
-		fmt.Println("Error: your OS is not supported")
-		return
-	}
-
-	cmd.Stdout = os.Stdout
-	cmd.Stdin = os.Stdin
-	cmd.Run()
+func printBanner() {
+	fmt.Print(colorRed,
+		"                                     _\n",
+		"_-_ _,,   ,,            ,,          - - /, /,              |\\\n",
+		"   -/  )  ||   _        ||            )/ )/ )               \\\\\n",
+		"  ~||_<   ||  < \\,  _-_ ||/\\ '\\\\/\\\\   )__)__)  /'\\\\  /'\\\\  / \\\\ '\\\\/\\\\\n",
+		"   || \\\\  ||  /-|| ||   ||_<  || ;'  ~)__)__) || || || || || ||  || ;'\n",
+		"   ,/--|| || (( || ||   || |  ||/     )  )  ) || || || || || ||  ||/\n",
+		"  _--_-'  \\\\  \\/\\\\ \\\\,/ \\\\,\\  |/     /-_/-_/  \\\\,/  \\\\,/   \\\\/   |/\n",
+		" (                           (                                  (\n",
+		"                              -_-                                -_-\n",
+		colorReset)
 }
 
 func usage() {
@@ -95,212 +92,233 @@ func usage() {
 	fmt.Println("  woody connect <ip:port>")
 }
 
-// askName prompts user for a display name
 func askName(mode string) string {
 	fmt.Print("Your nickname: ")
 	r := bufio.NewReader(os.Stdin)
 	n, _ := r.ReadString('\n')
 	n = strings.TrimSpace(n)
+
 	if n == "" {
 		if mode == "listen" {
 			n = "Host"
-		}
-		if mode == "connect" {
+		} else {
 			n = "Client"
 		}
 	}
+	
 	return n
 }
 
-// signalContext returns a context that cancels on SIGINT/SIGTERM
+func askPassword() string {
+	fmt.Print("Shared password: ")
+	r := bufio.NewReader(os.Stdin)
+	p, _ := r.ReadString('\n')
+	
+	return strings.TrimSpace(p)
+}
+
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
 	go func() {
 		<-c
 		cancel()
 	}()
+
 	return ctx, cancel
 }
 
 func listenMode(ctx context.Context, port, name string) error {
+	// Ask host for the shared password before accepting connections
+	password := askPassword()
+	if password == "" {
+		return fmt.Errorf("empty password")
+	}
+	
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		return err
 	}
 	defer ln.Close()
-	fmt.Printf("Waiting for connection to: %s\n", port)
+
+	fmt.Println("Waiting for connection on port:", port)
 
 	type result struct {
 		conn net.Conn
 		err  error
 	}
+
 	resCh := make(chan result, 1)
 
 	go func() {
 		conn, err := ln.Accept()
-		resCh <- result{conn: conn, err: err}
+		resCh <- result{conn, err}
 	}()
 
 	select {
 	case <-ctx.Done():
+		fmt.Printf("\n[%s%s%s] Cancelled\n", colorRed, tag, colorReset)
 		return nil
-	case r := <-resCh:
-		if r.err != nil {
-			return r.err
+
+	case res := <-resCh:
+		if res.err != nil {
+			return res.err
 		}
-		defer r.conn.Close()
-		fmt.Println("Client connected:", r.conn.RemoteAddr())
-		return handleConn(ctx, r.conn, name)
+		defer res.conn.Close()
+
+		fmt.Println("Client connected:", res.conn.RemoteAddr())
+		return handleConn(ctx, res.conn, name, true, password)
+
 	}
 }
 
 func connectMode(ctx context.Context, addr, name string) error {
 	fmt.Println("Connecting to", addr)
+
 	d := net.Dialer{Timeout: 8 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return err
 	}
 	defer conn.Close()
-	fmt.Println("Successfully connected to", conn.RemoteAddr())
-	return handleConn(ctx, conn, name)
+
+	fmt.Println("Connected to", conn.RemoteAddr())
+    
+	// client will be prompted for password inside handleConn
+	return handleConn(ctx, conn, name, false, "")
+
 }
 
-// handleConn performs simple name exchange then runs send/receive loops
-func handleConn(ctx context.Context, conn net.Conn, myName string) error {
-	// set deadlines to avoid stuck Read on closed socket (optional)
-	_ = conn.SetReadDeadline(time.Time{}) // clear any deadline
-
-	// Exchange names: each side sends its name as the first line.
-	// This works because both sides will write then read (race is fine).
-	writer := bufio.NewWriter(conn)
-	reader := bufio.NewReader(conn)
-
-	// Send my name
-	if _, err := writer.WriteString(myName + "\n"); err != nil {
-		return fmt.Errorf("send name: %w", err)
-	}
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("flush name: %w", err)
+func handleConn(ctx context.Context, conn net.Conn, myName string, isServer bool, password string) error {
+	if password == "" {
+		password = askPassword()
+		if password == "" {
+			return fmt.Errorf("empty password")
+		}
 	}
 
-	// Read peer name (first line)
-	peerNameRaw, err := reader.ReadString('\n')
+	secure, err := NewSecureConn(conn, conn, password, isServer)
 	if err != nil {
-		return fmt.Errorf("read peer name: %w", err)
+		return fmt.Errorf("secure handshake failed: %w", err)
 	}
-	peerName := strings.TrimSpace(peerNameRaw)
+
+	if err := secure.WriteMessage(myName); err != nil {
+		return err
+	}
+
+	peerName, err := secure.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("failed to read peer name")
+	}
 	if peerName == "" {
 		peerName = "Peer"
 	}
-	fmt.Printf("The name exchange is complete. Interlocutor: %s\n", peerName)
-	fmt.Println("To close the connection type '/exit' or press 'Ctrl+C'")
-	fmt.Println()
 
-	// Channels and wait group for goroutines
+	fmt.Println("Interlocutor:", peerName)
+	fmt.Println("")
+
 	done := make(chan struct{})
+	var once sync.Once
+	closeDone := func() {
+		once.Do(func() {
+			close(done)
+		})
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Receiving goroutine
+	// ================= RECEIVER =================
 	go func() {
 		defer wg.Done()
+
 		for {
 			select {
 			case <-ctx.Done():
+				closeDone()
 				return
 			case <-done:
 				return
 			default:
-				// read a line from peer
-				line, err := reader.ReadString('\n')
+				msg, err := secure.ReadMessage()
 				if err != nil {
-					if err == io.EOF {
-						fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Connection lost")
-					} else {
-						fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Reading error:", err)
-					}
-					// signal sender to stop
-					close(done)
-					return
+					fmt.Printf(
+						"\n[%s%s%s] Encrypted channel closed\n",
+						colorRed, tag, colorReset,
+					)
+					fmt.Printf(
+						"[%s%s%s] Session finished\n",
+						colorRed, tag, colorReset,
+					)
+					os.Exit(0)
 				}
-				line = strings.TrimRight(line, "\r\n")
-				// print with peer name and timestamp
-				fmt.Printf("\r[\u001b[38;5;88m%s\u001b[0m] [%s]: %s\n", peerName, timeNow(), line)
-				// reprint prompt marker if needed
-				fmt.Print("> ")
+
+				fmt.Printf(
+					"\r[%s%s%s] [%s]: %s\n> ",
+					colorPeer, peerName, colorReset,
+					timeNow(), msg,
+				)
 			}
 		}
 	}()
 
-	// Sending goroutine (reads from stdin)
+	// ================= SENDER =================
 	go func() {
 		defer wg.Done()
+
 		stdin := bufio.NewReader(os.Stdin)
+
 		for {
 			fmt.Print("> ")
 			text, err := stdin.ReadString('\n')
 			if err != nil {
-				// stdin closed or error
-				fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Input is closed")
-				close(done)
+				closeDone()
 				return
 			}
-			text = strings.TrimRight(text, "\r\n")
+
+			text = strings.TrimSpace(text)
 			if text == "/exit" {
-				close(done)
+				closeDone()
 				return
 			}
-			// prepare and send
-			if _, err := writer.WriteString(text + "\n"); err != nil {
-				fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Sending error:", err)
-				close(done)
-				return
-			}
-			if err := writer.Flush(); err != nil {
-				fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Flush error:", err)
-				close(done)
+
+			if err := secure.WriteMessage(text); err != nil {
+				fmt.Printf(
+					"\n[%s%s%s] Send failed\n",
+					colorRed, tag, colorReset,
+				)
+				closeDone()
 				return
 			}
 		}
 	}()
 
-	// Wait for context cancellation (Ctrl+C) or done channel
 	select {
 	case <-ctx.Done():
-		// user pressed Ctrl+C
-		fmt.Println("\n[\u001b[31mBlackyWoody\u001b[0m] Finishing by signal")
 	case <-done:
-		// connection closed or /exit
 	}
 
-	// close connection and wait goroutines
+	closeDone()
 	_ = conn.Close()
-	// ensure done closed so goroutines exit
-	select {
-	case <-done:
-	default:
-		close(done)
-	}
 	wg.Wait()
-	fmt.Println("[\u001b[31mBlackyWoody\u001b[0m] Session is finished")
+
+	fmt.Printf(
+		"[%s%s%s] Session finished\n",
+		colorRed, tag, colorReset,
+	)
 	return nil
 }
+
 
 func timeNow() string {
 	return time.Now().Format("15:04:05")
 }
 
 func showLocalIPs() {
-	ips, err := getLocalIPs()
-	if err != nil {
-		fmt.Println("Error of getting IP:", err)
-		return
-	}
-
-	fmt.Println("Your IP-adresses:")
+	ips, _ := getLocalIPs()
+	fmt.Println("Your IP addresses:")
 	for _, ip := range ips {
 		fmt.Println(" -", ip)
 	}
@@ -308,44 +326,21 @@ func showLocalIPs() {
 
 func getLocalIPs() ([]string, error) {
 	var ips []string
+	ifaces, _ := net.Interfaces()
 
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, iface := range interfaces {
+	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 {
 			continue
 		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
+		addrs, _ := iface.Addrs()
 		for _, addr := range addrs {
-			var ip net.IP
-
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ip := ipnet.IP.To4(); ip != nil {
+					ips = append(ips, ip.String())
+				}
 			}
-
-			if ip == nil {
-				continue
-			}
-
-			ip = ip.To4()
-			if ip == nil {
-				continue
-			}
-
-			ips = append(ips, ip.String())
 		}
 	}
-
+	
 	return ips, nil
 }
